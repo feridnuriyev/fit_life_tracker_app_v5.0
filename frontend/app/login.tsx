@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -15,16 +15,62 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as WebBrowser from 'expo-web-browser';
-import * as Linking from 'expo-linking';
+import * as AuthSession from 'expo-auth-session';
 import { useAuth } from '../src/AuthContext';
 
+WebBrowser.maybeCompleteAuthSession();
+
+const googleDiscovery = {
+  authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+  tokenEndpoint: 'https://oauth2.googleapis.com/token',
+};
+
 export default function Login() {
-  const { login, register, loginWithGoogleSessionId } = useAuth();
+  const { login, register, loginWithGoogleCode } = useAuth();
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  const handledGoogleCode = useRef<string | null>(null);
+  const googleClientId = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID || 'not-configured';
+  const googleConfigured = googleClientId !== 'not-configured';
+  const redirectUri = AuthSession.makeRedirectUri({ scheme: 'movena', path: 'oauth' });
+  const [googleRequest, googleResponse, promptGoogle] = AuthSession.useAuthRequest(
+    {
+      clientId: googleClientId,
+      redirectUri,
+      responseType: AuthSession.ResponseType.Code,
+      scopes: ['openid', 'profile', 'email'],
+      usePKCE: true,
+    },
+    googleDiscovery,
+  );
+
+  useEffect(() => {
+    if (googleResponse?.type !== 'success') return;
+
+    const code = googleResponse.params.code;
+    const codeVerifier = googleRequest?.codeVerifier;
+    if (!code || !codeVerifier) {
+      setBusy(false);
+      Alert.alert('Google login failed', 'The sign-in response was incomplete.');
+      return;
+    }
+    if (handledGoogleCode.current === code) return;
+    handledGoogleCode.current = code;
+
+    loginWithGoogleCode({
+      code,
+      code_verifier: codeVerifier,
+      redirect_uri: redirectUri,
+      client_id: googleClientId,
+    })
+      .catch((error: Error) => {
+        Alert.alert('Google login failed', error.message || 'Try again');
+      })
+      .finally(() => setBusy(false));
+  }, [googleClientId, googleRequest, googleResponse, loginWithGoogleCode, redirectUri]);
 
   const onSubmit = async () => {
     if (!email || !password || (mode === 'signup' && !name)) {
@@ -43,38 +89,16 @@ export default function Login() {
   };
 
   const onGoogle = async () => {
+    if (!googleConfigured || !googleRequest) {
+      Alert.alert('Google login', 'Google sign-in is not configured yet.');
+      return;
+    }
     setBusy(true);
     try {
-      const redirectUrl = Platform.OS === 'web'
-        ? (process.env.EXPO_PUBLIC_BACKEND_URL || '') + '/'
-        : Linking.createURL('/');
-      const authUrl = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
-      const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUrl);
-      if (result.type === 'success' && result.url) {
-        // parse session_id from hash or query
-        const url = result.url;
-        const hashIdx = url.indexOf('#');
-        let sessionId: string | null = null;
-        if (hashIdx >= 0) {
-          const hash = url.substring(hashIdx + 1);
-          const params = new URLSearchParams(hash);
-          sessionId = params.get('session_id');
-        }
-        if (!sessionId) {
-          try {
-            const u = new URL(url);
-            sessionId = u.searchParams.get('session_id');
-          } catch {}
-        }
-        if (sessionId) {
-          await loginWithGoogleSessionId(sessionId);
-        } else {
-          Alert.alert('Google login', 'Could not get session id.');
-        }
-      }
+      const result = await promptGoogle();
+      if (result.type !== 'success') setBusy(false);
     } catch (e: any) {
       Alert.alert('Google login failed', e.message || 'Try again');
-    } finally {
       setBusy(false);
     }
   };
@@ -93,7 +117,7 @@ export default function Login() {
           <ScrollView contentContainerStyle={styles.cardInner} keyboardShouldPersistTaps="handled">
             <View style={styles.brandRow}>
               <View style={styles.logoDot} />
-              <Text style={styles.brand}>Pulse</Text>
+              <Text style={styles.brand}>Movena</Text>
             </View>
             <Text style={styles.title}>{mode === 'login' ? 'Welcome back' : 'Create account'}</Text>
             <Text style={styles.subtitle}>
@@ -104,7 +128,7 @@ export default function Login() {
               testID="google-login-button"
               style={styles.googleBtn}
               onPress={onGoogle}
-              disabled={busy}
+              disabled={busy || !googleRequest || !googleConfigured}
             >
               <Ionicons name="logo-google" size={20} color="#09090b" />
               <Text style={styles.googleText}>Continue with Google</Text>

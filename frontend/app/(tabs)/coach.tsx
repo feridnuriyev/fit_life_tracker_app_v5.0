@@ -1,15 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity,
-  KeyboardAvoidingView, Platform, ActivityIndicator, Image,
+  KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { apiFetch } from '../../src/AuthContext';
 
-type Msg = { role: 'user' | 'ai'; text: string };
-
-const AVATAR = 'https://static.prod-images.emergentagent.com/jobs/bee8dd31-65f1-460c-914f-3450967977f1/images/e90276d51aff3df735d760c59c3dfdcb842218f938e13f7a84e5c22d59d6e014.png';
+type Msg = { role: 'user' | 'assistant'; text: string };
 
 const SUGGESTIONS = [
   'Suggest a 30-min full body workout',
@@ -30,7 +28,7 @@ export default function Coach() {
       const msgs: Msg[] = [];
       data.messages.forEach((m: any) => {
         msgs.push({ role: 'user', text: m.user_message });
-        msgs.push({ role: 'ai', text: m.ai_reply });
+        msgs.push({ role: 'assistant', text: m.ai_reply });
       });
       setMessages(msgs);
     } catch (e: any) { console.warn(e.message); }
@@ -53,9 +51,9 @@ export default function Coach() {
         method: 'POST',
         body: JSON.stringify({ message: msg }),
       });
-      setMessages(prev => [...prev, { role: 'ai', text: res.reply }]);
+      setMessages(prev => [...prev, { role: 'assistant', text: res.reply }]);
     } catch (e: any) {
-      setMessages(prev => [...prev, { role: 'ai', text: `Error: ${e.message}` }]);
+      setMessages(prev => [...prev, { role: 'assistant', text: `Error: ${e.message}` }]);
     } finally {
       setSending(false);
     }
@@ -64,10 +62,12 @@ export default function Coach() {
   return (
     <SafeAreaView style={styles.root} edges={['top']}>
       <View style={styles.header}>
-        <Image source={{ uri: AVATAR }} style={styles.avatar} />
+        <View style={styles.avatar}>
+          <Ionicons name="fitness" size={20} color="#3730a3" />
+        </View>
         <View>
-          <Text style={styles.title}>AI Coach</Text>
-          <Text style={styles.subtitle}>Powered by Claude</Text>
+          <Text style={styles.title}>Coach</Text>
+          <Text style={styles.subtitle}>Personal fitness guidance</Text>
         </View>
       </View>
 
@@ -83,7 +83,9 @@ export default function Coach() {
         >
           {messages.length === 0 && (
             <View style={styles.welcome}>
-              <Image source={{ uri: AVATAR }} style={styles.welcomeAvatar} />
+              <View style={styles.welcomeAvatar}>
+                <Ionicons name="fitness" size={38} color="#3730a3" />
+              </View>
               <Text style={styles.welcomeTitle}>Hey there 👋</Text>
               <Text style={styles.welcomeText}>
                 Ask me anything about workouts, recovery or nutrition. I know your stats today.
@@ -107,15 +109,15 @@ export default function Coach() {
             <View
               key={i}
               testID={`msg-${i}`}
-              style={[styles.bubble, m.role === 'user' ? styles.userBubble : styles.aiBubble]}
+              style={[styles.bubble, m.role === 'user' ? styles.userBubble : styles.assistantBubble]}
             >
-              <Text style={[styles.bubbleText, m.role === 'user' ? styles.userText : styles.aiText]}>
+              <Text style={[styles.bubbleText, m.role === 'user' ? styles.userText : styles.assistantText]}>
                 {m.text}
               </Text>
             </View>
           ))}
           {sending && (
-            <View style={[styles.bubble, styles.aiBubble]}>
+            <View style={[styles.bubble, styles.assistantBubble]}>
               <ActivityIndicator color="#09090b" />
             </View>
           )}
@@ -149,12 +151,12 @@ export default function Coach() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#fff' },
   header: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 20, borderBottomWidth: 1, borderBottomColor: '#f4f4f5' },
-  avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#eef2ff' },
+  avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#eef2ff', alignItems: 'center', justifyContent: 'center' },
   title: { fontSize: 18, fontWeight: '700', color: '#09090b' },
   subtitle: { fontSize: 12, color: '#71717a' },
   chatBody: { padding: 16, gap: 8 },
   welcome: { alignItems: 'center', padding: 24, gap: 12 },
-  welcomeAvatar: { width: 84, height: 84, borderRadius: 42, backgroundColor: '#eef2ff' },
+  welcomeAvatar: { width: 84, height: 84, borderRadius: 42, backgroundColor: '#eef2ff', alignItems: 'center', justifyContent: 'center' },
   welcomeTitle: { fontSize: 22, fontWeight: '800', color: '#09090b' },
   welcomeText: { fontSize: 14, color: '#71717a', textAlign: 'center', lineHeight: 20, maxWidth: 300 },
   sugWrap: { width: '100%', gap: 8, marginTop: 12 },
@@ -162,10 +164,10 @@ const styles = StyleSheet.create({
   sugText: { color: '#09090b', fontSize: 14, fontWeight: '500' },
   bubble: { maxWidth: '85%', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18, marginVertical: 2 },
   userBubble: { backgroundColor: '#09090b', alignSelf: 'flex-end', borderBottomRightRadius: 4 },
-  aiBubble: { backgroundColor: '#f4f4f5', alignSelf: 'flex-start', borderBottomLeftRadius: 4 },
+  assistantBubble: { backgroundColor: '#f4f4f5', alignSelf: 'flex-start', borderBottomLeftRadius: 4 },
   bubbleText: { fontSize: 15, lineHeight: 21 },
   userText: { color: '#fff' },
-  aiText: { color: '#09090b' },
+  assistantText: { color: '#09090b' },
   inputBar: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#f4f4f5', backgroundColor: '#fff' },
   input: { flex: 1, minHeight: 44, maxHeight: 120, backgroundColor: '#fafafa', borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, color: '#09090b', borderWidth: 1, borderColor: '#e4e4e7' },
   sendBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#09090b', alignItems: 'center', justifyContent: 'center' },

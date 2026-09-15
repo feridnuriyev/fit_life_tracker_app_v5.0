@@ -1,185 +1,106 @@
-# Stride — AI-Powered Fitness Tracker
+# Movena
 
-A full-stack mobile fitness tracker built with **Expo (React Native)**, **FastAPI**, and **MongoDB** — featuring an AI coach that has live context of your daily stats and gives personalised workout and nutrition advice.
-
----
+Movena is a mobile fitness tracker for recording daily activity, workouts, meals, and weekly progress. It includes a personal coaching chat that can use the current day's activity data when answering.
 
 ## Features
 
-- **Dual authentication** — email/password (JWT) and Google sign-in via OAuth
-- **Dashboard** — animated step ring with calories, active minutes, water, and distance tiles
-- **Workout logger** — log exercises with multiple sets (reps × weight), duration, and calories burned
-- **Nutrition tracking** — log meals by type (breakfast / lunch / dinner / snack) with full macro breakdown (protein, carbs, fats) and a daily calorie progress bar
-- **Progress charts** — last-7-days bar charts for steps and calories with summary tiles
-- **AI Coach** — conversational coach powered by Claude Sonnet 4.5; has live access to today's stats and gives personalised advice
-- **Mobile-first UI** — light and minimal design with safe-area handling, keyboard avoidance, and pull-to-refresh
+- Email/password and Google sign-in
+- Daily steps, calories, active minutes, water, and distance
+- Workout logging with exercises, sets, duration, and calories
+- Meal logging with calories and macronutrients
+- Seven-day activity and workout summaries
+- Context-aware fitness coaching
 
----
+## Stack
 
-## Tech Stack
+- Expo SDK 54, React Native 0.81, Expo Router, and TypeScript
+- FastAPI and Pydantic
+- MongoDB with the asynchronous Motor driver
+- JWT authentication and Google OAuth 2.0
+- Anthropic Messages API for coaching responses
 
-| Layer     | Technology                                                              |
-|-----------|-------------------------------------------------------------------------|
-| Frontend  | Expo SDK 54, Expo Router, React Native 0.81, TypeScript, react-native-svg, AsyncStorage |
-| Backend   | FastAPI, Motor (async MongoDB driver), Pydantic v2                      |
-| Database  | MongoDB                                                                 |
-| Auth      | JWT (PyJWT + bcrypt) + Google OAuth                                     |
-| AI        | Claude Sonnet 4.5 via the Anthropic API                                 |
+## Project layout
 
----
-
-## Project Structure
-
-```
-/app
-├── backend/
-│   ├── server.py          # All FastAPI routes (auth, workouts, activity, meals, progress, coach)
-│   ├── requirements.txt
-│   └── .env               # MONGO_URL, DB_NAME, JWT_SECRET, ANTHROPIC_API_KEY
-└── frontend/
-    ├── app/
-    │   ├── _layout.tsx    # Root layout + AuthProvider
-    │   ├── index.tsx      # Splash redirect (auth check)
-    │   ├── login.tsx      # Email/password + Google auth screen
-    │   └── (tabs)/
-    │       ├── _layout.tsx     # Bottom tab navigator
-    │       ├── index.tsx       # Dashboard (step ring + stats)
-    │       ├── workouts.tsx
-    │       ├── nutrition.tsx
-    │       ├── coach.tsx       # AI Coach chat
-    │       └── progress.tsx
-    ├── src/
-    │   └── AuthContext.tsx     # Auth state + apiFetch helper
-    └── .env               # EXPO_PUBLIC_BACKEND_URL
+```text
+backend/
+  server.py
+  requirements.txt
+frontend/
+  app/
+  assets/
+  src/AuthContext.tsx
+  app.json
+  package.json
 ```
 
----
+## Local setup
 
-## Getting Started
+Requirements:
 
-### Prerequisites
+- Node.js 22 or newer and pnpm 11
+- Python 3.11 or newer
+- MongoDB
 
-- Node.js 18+
-- Python 3.11+
-- MongoDB (local or Atlas)
-- Anthropic API key
-
-### Backend
+Start the API:
 
 ```bash
-cd app/backend
-pip install -r requirements.txt
-```
-
-Create a `.env` file:
-
-```env
-MONGO_URL="mongodb://localhost:27017"
-DB_NAME="stride"
-JWT_SECRET="your-secret-key"
-ANTHROPIC_API_KEY="your-api-key"
-```
-
-```bash
+cd backend
+python -m venv .venv
+python -m pip install -r requirements.txt
+copy .env.example .env
 uvicorn server:app --reload --port 8001
 ```
 
-### Frontend
+Start the app in another terminal:
 
 ```bash
-cd app/frontend
-npm install
-npx expo start
+cd frontend
+pnpm install --frozen-lockfile
+copy .env.example .env
+pnpm start
 ```
 
-Create a `.env` file:
+For a physical device, set `EXPO_PUBLIC_BACKEND_URL` to an address the device can reach instead of `localhost`.
 
-```env
-EXPO_PUBLIC_BACKEND_URL=http://localhost:8001
-```
+## Google sign-in
 
-Scan the QR code with [Expo Go](https://expo.dev/go) on your device, or press `i` / `a` to open in a simulator.
+Create an OAuth client in Google Cloud and register the redirect URI printed by Expo for the app. Then:
 
----
+1. Set `EXPO_PUBLIC_GOOGLE_CLIENT_ID` in `frontend/.env`.
+2. Add the same client ID to `GOOGLE_CLIENT_IDS` in `backend/.env`.
+3. If the OAuth client requires a secret, set `GOOGLE_CLIENT_SECRET` only in the backend environment.
 
-## API Reference
+The app uses the authorization-code flow with PKCE. The backend exchanges the code with Google, verifies the returned identity, and issues the same application JWT used by email/password accounts.
 
-All endpoints are prefixed with `/api`. Protected endpoints require `Authorization: Bearer <token>`.
+## API
 
-### Auth
+All routes use the `/api` prefix. Protected routes expect `Authorization: Bearer <token>`.
 
-| Method | Path                | Body                              | Description                        |
-|--------|---------------------|-----------------------------------|------------------------------------|
-| POST   | `/auth/register`    | `{ email, password, name }`       | Create account → `{ token, user }` |
-| POST   | `/auth/login`       | `{ email, password }`             | Sign in → `{ token, user }`        |
-| POST   | `/auth/google`      | `{ session_id }`                  | Google OAuth → `{ token, user }`   |
-| GET    | `/auth/me`          | —                                 | Current user                       |
-| POST   | `/auth/logout`      | —                                 | Invalidate session                 |
+| Method | Route | Purpose |
+| --- | --- | --- |
+| POST | `/auth/register` | Create an account |
+| POST | `/auth/login` | Sign in with email and password |
+| POST | `/auth/google` | Complete Google OAuth sign-in |
+| GET | `/auth/me` | Return the current user |
+| GET, POST | `/activity/today` | Read or update today's activity |
+| POST | `/activity/increment` | Add to today's activity totals |
+| GET, POST | `/workouts` | List or create workouts |
+| DELETE | `/workouts/{id}` | Delete a workout |
+| GET | `/meals/today` | List today's meals |
+| POST | `/meals` | Create a meal |
+| DELETE | `/meals/{id}` | Delete a meal |
+| GET | `/progress/weekly` | Return the last seven days |
+| POST | `/coach/chat` | Send a message to the coach |
+| GET | `/coach/history` | Return coaching history |
 
-### Workouts
+## Configuration
 
-| Method | Path                    | Body                                                                 | Description                                          |
-|--------|-------------------------|----------------------------------------------------------------------|------------------------------------------------------|
-| GET    | `/workouts`             | —                                                                    | List all workouts for the current user               |
-| POST   | `/workouts`             | `{ name, exercises[], duration_minutes, calories_burned, notes? }` | Log a workout; auto-increments daily activity totals |
-| DELETE | `/workouts/{id}`        | —                                                                    | Delete a workout                                     |
+Do not commit `.env` files or credentials. Copy the included examples and replace their placeholder values locally.
 
-### Daily Activity
+## Upgrading an existing installation
 
-| Method | Path                    | Body                                                                 | Description          |
-|--------|-------------------------|----------------------------------------------------------------------|----------------------|
-| GET    | `/activity/today`       | —                                                                    | Today's totals       |
-| POST   | `/activity/today`       | `{ steps?, calories_burned?, active_minutes?, water_ml?, distance_km? }` | Set fields      |
-| POST   | `/activity/increment`   | same shape                                                           | Increment fields     |
+Keep your existing `MONGO_URL`, `DB_NAME`, and `JWT_SECRET`; renaming the app does not require moving user data. The database name in `.env.example` is for new installations only.
 
-### Nutrition
+Google sign-in now requires your own OAuth configuration. Existing provider sessions may require signing in again. Register and verify the redirect URI for each target platform before release; native Google sign-in has not been device-tested. The app's URL scheme is now `movena`.
 
-| Method | Path              | Body                                              | Description   |
-|--------|-------------------|---------------------------------------------------|---------------|
-| GET    | `/meals/today`    | —                                                 | Today's meals |
-| POST   | `/meals`          | `{ name, meal_type, calories, protein, carbs, fats }` | Log a meal |
-| DELETE | `/meals/{id}`     | —                                                 | Delete a meal |
-
-### Progress
-
-| Method | Path               | Description                                          |
-|--------|--------------------|------------------------------------------------------|
-| GET    | `/progress/weekly` | Last 7 days: steps, calories, active minutes, workout count |
-
-### AI Coach
-
-| Method | Path              | Body        | Description                              |
-|--------|-------------------|-------------|------------------------------------------|
-| POST   | `/coach/chat`     | `{ message }` | Send a message; coach has live daily context |
-| GET    | `/coach/history`  | —           | Retrieve chat history                    |
-
----
-
-## Environment Variables
-
-**`/app/backend/.env`**
-
-```env
-MONGO_URL="mongodb://localhost:27017"
-DB_NAME="stride"
-JWT_SECRET="your-secret-key"
-ANTHROPIC_API_KEY="your-api-key"
-```
-
-**`/app/frontend/.env`**
-
-```env
-EXPO_PUBLIC_BACKEND_URL=http://localhost:8001
-```
-
----
-
-## Design Decisions
-
-**Single daily activity document** — the dashboard, workout logger, and activity inputs all read from and write to a single document per user per day. The increment endpoint allows additive updates (e.g. logging a new workout automatically adds to the day's calorie and active-minutes totals) without requiring a separate sync step.
-
-**Context-aware AI Coach** — rather than a generic chatbot, the coach fetches the user's live stats (steps, calories, meals, workouts logged today) before each response. This means advice is grounded in actual data, not generic recommendations.
-
-**Monetisation path** — the core tracker (dashboard, workout logger, nutrition, progress charts) is designed to remain free and drive daily engagement. The AI Coach is intentionally positioned as a premium feature that can be metered behind a subscription (e.g. 10 messages/day free → unlimited with a paid plan) without requiring architectural changes.
-
-**Pure React Native** — no HTML or CSS; all UI is built with React Native components and `StyleSheet`. The step ring is drawn with `react-native-svg`. Every interactive element has a `testID` for automated testing.
+Coaching requires a server-side `ANTHROPIC_API_KEY`. Email/password sign-in and tracking do not require the coaching service.

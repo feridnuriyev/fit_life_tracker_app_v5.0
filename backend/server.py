@@ -23,9 +23,16 @@ db = client[os.environ['DB_NAME']]
 
 JWT_SECRET = os.environ['JWT_SECRET']
 JWT_ALGO = "HS256"
-EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
+ANTHROPIC_MODEL = os.environ.get('ANTHROPIC_MODEL', 'claude-sonnet-4-5-20250929')
+GOOGLE_CLIENT_IDS = {
+    value.strip()
+    for value in os.environ.get('GOOGLE_CLIENT_IDS', '').split(',')
+    if value.strip()
+}
+GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
 
-app = FastAPI()
+app = FastAPI(title="Movena API")
 api_router = APIRouter(prefix="/api")
 
 
@@ -40,7 +47,10 @@ class UserLogin(BaseModel):
     password: str
 
 class GoogleAuthRequest(BaseModel):
-    session_id: str
+    code: str
+    code_verifier: str
+    redirect_uri: str
+    client_id: str
 
 class UserOut(BaseModel):
     user_id: str
@@ -144,17 +154,6 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     except jwt.PyJWTError:
         pass
 
-    # Try Emergent session token
-    session = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
-    if session:
-        expires_at = session.get("expires_at")
-        if expires_at and expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        if expires_at and expires_at > datetime.now(timezone.utc):
-            user = await db.users.find_one({"user_id": session["user_id"]}, {"_id": 0})
-            if user:
-                return user
-
     raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
@@ -202,26 +201,56 @@ async def login(req: UserLogin):
 
 @api_router.post("/auth/google", response_model=AuthResponse)
 async def google_auth(req: GoogleAuthRequest):
-    """Exchange Emergent session_id for user data, create/find user, return session_token."""
+    if not GOOGLE_CLIENT_IDS or req.client_id not in GOOGLE_CLIENT_IDS:
+        raise HTTPException(status_code=503, detail="Google sign-in is not configured")
+
+    token_request = {
+        "code": req.code,
+        "client_id": req.client_id,
+        "code_verifier": req.code_verifier,
+        "redirect_uri": req.redirect_uri,
+        "grant_type": "authorization_code",
+    }
+    if GOOGLE_CLIENT_SECRET:
+        token_request["client_secret"] = GOOGLE_CLIENT_SECRET
+
     async with httpx.AsyncClient(timeout=15.0) as hc:
         try:
-            resp = await hc.get(
-                "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
-                headers={"X-Session-ID": req.session_id},
+            token_response = await hc.post(
+                "https://oauth2.googleapis.com/token",
+                data=token_request,
             )
-            resp.raise_for_status()
-        except httpx.HTTPError as e:
-            raise HTTPException(status_code=401, detail=f"Google auth failed: {e}")
-        data = resp.json()
+            token_response.raise_for_status()
+            id_token = token_response.json().get("id_token")
+            if not id_token:
+                raise HTTPException(status_code=401, detail="Google did not return an ID token")
+
+            profile_response = await hc.get(
+                "https://oauth2.googleapis.com/tokeninfo",
+                params={"id_token": id_token},
+            )
+            profile_response.raise_for_status()
+            data = profile_response.json()
+        except httpx.HTTPStatusError:
+            raise HTTPException(status_code=401, detail="Google sign-in failed")
+
+    if data.get("aud") != req.client_id or data.get("email_verified") not in (True, "true"):
+        raise HTTPException(status_code=401, detail="Google account could not be verified")
 
     email = data.get("email", "").lower()
     name = data.get("name", "")
     picture = data.get("picture")
-    session_token = data.get("session_token")
+    if not email:
+        raise HTTPException(status_code=401, detail="Google account has no email address")
 
     existing = await db.users.find_one({"email": email}, {"_id": 0})
     if existing:
         user_id = existing["user_id"]
+        name = name or existing.get("name", "")
+        await db.users.update_one(
+            {"user_id": user_id},
+            {"$set": {"name": name, "picture": picture}},
+        )
     else:
         user_id = f"user_{uuid.uuid4().hex[:12]}"
         await db.users.insert_one({
@@ -234,16 +263,8 @@ async def google_auth(req: GoogleAuthRequest):
             "created_at": datetime.now(timezone.utc),
         })
 
-    # Store session
-    await db.user_sessions.insert_one({
-        "user_id": user_id,
-        "session_token": session_token,
-        "expires_at": datetime.now(timezone.utc) + timedelta(days=7),
-        "created_at": datetime.now(timezone.utc),
-    })
-
     return AuthResponse(
-        token=session_token,
+        token=create_jwt(user_id),
         user=UserOut(user_id=user_id, email=email, name=name, picture=picture),
     )
 
@@ -254,10 +275,7 @@ async def me(user: dict = Depends(get_current_user)):
 
 
 @api_router.post("/auth/logout")
-async def logout(authorization: Optional[str] = Header(None)):
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization.split(" ", 1)[1]
-        await db.user_sessions.delete_one({"session_token": token})
+async def logout():
     return {"ok": True}
 
 
@@ -419,7 +437,8 @@ async def progress_weekly(user: dict = Depends(get_current_user)):
 # ============ AI Coach ============
 @api_router.post("/coach/chat", response_model=ChatResponse)
 async def coach_chat(req: ChatMessage, user: dict = Depends(get_current_user)):
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(status_code=503, detail="Coach is not configured")
 
     # Get user context
     activity = await db.daily_activity.find_one(
@@ -439,18 +458,45 @@ async def coach_chat(req: ChatMessage, user: dict = Depends(get_current_user)):
         "Suggest specific workouts (sets/reps) when asked. Be encouraging but realistic."
     )
 
-    session_id = f"coach_{user['user_id']}"
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=session_id,
-        system_message=system_msg,
-    ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+    previous_messages = await db.coach_messages.find(
+        {"user_id": user["user_id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(10)
+    conversation = []
+    for message in reversed(previous_messages):
+        conversation.extend([
+            {"role": "user", "content": message["user_message"]},
+            {"role": "assistant", "content": message["ai_reply"]},
+        ])
+    conversation.append({"role": "user", "content": req.message})
 
     try:
-        reply = await chat.send_message(UserMessage(text=req.message))
-    except Exception as e:
+        async with httpx.AsyncClient(timeout=30.0) as hc:
+            response = await hc.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": ANTHROPIC_MODEL,
+                    "max_tokens": 300,
+                    "system": system_msg,
+                    "messages": conversation,
+                },
+            )
+            response.raise_for_status()
+            content = response.json().get("content", [])
+            reply = "".join(
+                block.get("text", "")
+                for block in content
+                if block.get("type") == "text"
+            ).strip()
+            if not reply:
+                raise ValueError("Empty response")
+    except (httpx.HTTPError, ValueError):
         logger.exception("AI coach error")
-        raise HTTPException(status_code=500, detail=f"AI error: {e}")
+        raise HTTPException(status_code=502, detail="Coach is temporarily unavailable")
 
     # Save chat history
     await db.coach_messages.insert_one({
@@ -475,7 +521,7 @@ async def coach_history(user: dict = Depends(get_current_user)):
 
 @api_router.get("/")
 async def root():
-    return {"message": "Fitness Tracker API", "status": "ok"}
+    return {"message": "Movena API", "status": "ok"}
 
 
 # Register router
@@ -484,7 +530,11 @@ app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=["*"],
+    allow_origins=[
+        origin.strip()
+        for origin in os.environ.get("CORS_ORIGINS", "http://localhost:8081").split(",")
+        if origin.strip()
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )

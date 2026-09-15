@@ -19,8 +19,15 @@ type AuthContextType = {
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, name: string) => Promise<void>;
-  loginWithGoogleSessionId: (sessionId: string) => Promise<void>;
+  loginWithGoogleCode: (payload: GoogleCodePayload) => Promise<void>;
   logout: () => Promise<void>;
+};
+
+type GoogleCodePayload = {
+  code: string;
+  code_verifier: string;
+  redirect_uri: string;
+  client_id: string;
 };
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -65,7 +72,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const me = await apiFetch('/auth/me');
       setUser(me);
       return me;
-    } catch (e) {
+    } catch {
       await persistToken(null);
       setUser(null);
       return null;
@@ -115,11 +122,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     router.replace('/(tabs)');
   };
 
-  const loginWithGoogleSessionId = async (sessionId: string) => {
+  const loginWithGoogleCode = async (payload: GoogleCodePayload) => {
     const res = await fetch(`${API}/auth/google`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: 'Google login failed' }));
@@ -142,7 +149,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   return (
     <AuthContext.Provider
-      value={{ user, token, loading, login, register, loginWithGoogleSessionId, logout }}
+      value={{ user, token, loading, login, register, loginWithGoogleCode, logout }}
     >
       {children}
     </AuthContext.Provider>
